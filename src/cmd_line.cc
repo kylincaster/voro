@@ -45,9 +45,8 @@ void help_message() {
          " -n [3]      : Manually specify the internal grid size\n"
          " -o          : Ensure that the output file has the same order as the input\n"
          "               file\n"
-         " -t          : Flag for non-Orthogonal periodic cell with all directions\n"
-		 "             Syntax: [options] <bxy> <Lx> <byz> <Ly> \n"
-	     "                               <bxz> <Lz> <filename>\n"
+         " --tri       : Flag for non-Orthogonal periodic cell with all directions\n"
+		 "               Syntax: [options] <bxy> <Lx> <byz> <Ly> <bxz> <Lz> <filename>\n"
          " -p          : Make container periodic in all three directions\n"
          " -px         : Make container periodic in the x direction\n"
          " -py         : Make container periodic in the y direction\n"
@@ -347,7 +346,7 @@ int main(int argc,char **argv) {
                 return VOROPP_CMD_LINE_ERROR;
             }
         } else if(se(argv[i],"-o")) ordered=true;
-        else if(strcmp(argv[i],"-t")==0) {
+        else if(strcmp(argv[i],"--tri")==0) {
 			non_orthogonal = x_prd = y_prd = z_prd = true;
 		}
         else if(se(argv[i],"-p")) x_prd=y_prd=z_prd=true;
