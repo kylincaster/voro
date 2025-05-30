@@ -20,7 +20,7 @@ depend:
 include Makefile.dep
 
 libvoro++.a: $(objs)
-	rm -f libvoro++.a
+	coreutils rm -f libvoro++.a
 	ar rs libvoro++.a $^
 
 voro++: libvoro++.a cmd_line.cc
@@ -33,6 +33,6 @@ help: Doxyfile $(SOURCE)
 	doxygen Doxyfile
 
 clean:
-	rm -f $(objs) voro++ libvoro++.a
+	coreutils rm -f $(objs) voro++ libvoro++.a
 
 .PHONY: all help execs depend

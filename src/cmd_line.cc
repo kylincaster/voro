@@ -30,7 +30,7 @@ void help_message() {
          "               <y_max> <z_min> <z_max> <input_file> [<output_file>]\n\n"
          "By default, the utility reads in the input file of particle IDs and positions,\n"
          "and computes the Voronoi cell for each.\n\n"
-         "If not specified, the output is saved to \"<input_file>.vor\". Using '-' for any\n"
+         "If not specified, the output is saved to \"<input_file>.vol\". Using '-' for any\n"
          "filename will read/write from standard input/output.\n\n"
          "Available options:\n"
          " -c <str>    : Specify a custom output string\n"
@@ -45,6 +45,9 @@ void help_message() {
          " -n [3]      : Manually specify the internal grid size\n"
          " -o          : Ensure that the output file has the same order as the input\n"
          "               file\n"
+         " -t          : Flag for non-Orthogonal periodic cell with all directions\n"
+		 "             Syntax: [options] <bxy> <Lx> <byz> <Ly> \n"
+	     "                               <bxz> <Lz> <filename>\n"
          " -p          : Make container periodic in all three directions\n"
          " -px         : Make container periodic in the x direction\n"
          " -py         : Make container periodic in the y direction\n"
@@ -134,6 +137,26 @@ inline bool se(const char* f1,const char* f2) {
     return strcmp(f1,f2)==0;
 }
 
+int count_lines(const char* inputfile) {
+	FILE *file = fopen(inputfile, "r"); 
+	if (file == NULL) { 
+        return -1;
+	}
+	int lineCount = 0;
+	char ch;
+	while ((ch = fgetc(file)) != EOF) { 
+        if (ch == '\n') { 
+            lineCount++;
+        }
+    }
+    fclose(file);
+
+	if (ch != '\n' && ch != EOF) {
+        lineCount++;
+    }
+	return lineCount;
+}
+
 // Opens an extra output file
 FILE* open_extra(char *buffer,char **argv,wall_list_3d &wl,int f_output,const char *ext,const char* base_fn,bool &stdout_used) {
     if(f_output>=0) {
@@ -209,13 +232,43 @@ void cmd_line_output(particle_order vo,c_class &con,v_class &c,const char* forma
     if(verbose) tp=con.total_particles();
 }
 
+template<class c_class,class v_class>
+void cmd_line_output_tri(c_class &con,v_class &c,const char* format,FILE* out_file,FILE* gnu_file,FILE* povp_file,FILE* povv_file,bool verbose,double &vol,int &vcc) {
+    container_triclinic_base::iterator cli;
+    double **conp=con.p;int **conid=con.id;
+    int i = 0;
+    printf("cmd_line_output_tri = %d\n", i);
+    for(cli=con.begin();cli<con.end();cli++) {
+        printf("iout = %d\n", i); i++;
+        if(con.compute_cell(c,cli)) {
+            cell_output(c,cli,con.ps,conp,conid,format,out_file,gnu_file,povp_file,povv_file);
+            if(verbose) {vol+=c.volume();vcc++;}
+        }
+    }
+}
+
+// Carries out the Voronoi computation and outputs the results to the requested
+// files, for the case when a particle order has been computed
+template<class c_class,class v_class>
+void cmd_line_output_tri(particle_order vo,c_class &con,v_class &c,const char* format,FILE* out_file,FILE* gnu_file,FILE* povp_file,FILE* povv_file,bool verbose,double &vol,int &vcc) {
+    container_triclinic_base::iterator_order cli;
+    double **conp=con.p;int **conid=con.id;
+    for(cli=con.begin(vo);cli<con.end(vo);cli++) 
+        if(con.compute_cell(c,cli)) {
+            cell_output(c,cli,con.ps,conp,conid,format,out_file,gnu_file,povp_file,povv_file);
+            if(verbose) {vol+=c.volume();vcc++;}
+        }
+}
+
+
+
 int main(int argc,char **argv) {
     int i=1,j=-7,custom_output=0,num_thread=1,nx,ny,nz,init_mem=8,
     gnuplot_output=-1,povv_output=-1,povp_output=-1;
     double ls=0;
     blocks_mode bm=none;
     bool polydisperse=false,x_prd=false,y_prd=false,z_prd=false,
-         ordered=false,verbose=false,stdout_used=false;
+         ordered=false,verbose=false,stdout_used=false, non_orthogonal = false;
 
     particle_list3 *plist3=NULL;particle_list4 *plist4=NULL;
     wall_list_3d wl;
@@ -238,8 +291,8 @@ int main(int argc,char **argv) {
     // If there aren't enough command-line arguments, then bail out with an
     // error
     if(argc<7) {
-           error_message();
-           return VOROPP_CMD_LINE_ERROR;
+        error_message();
+        return VOROPP_CMD_LINE_ERROR;
     }
 
     // We have enough arguments. Now start searching for command-line options.
@@ -294,6 +347,9 @@ int main(int argc,char **argv) {
                 return VOROPP_CMD_LINE_ERROR;
             }
         } else if(se(argv[i],"-o")) ordered=true;
+        else if(strcmp(argv[i],"-t")==0) {
+			non_orthogonal = x_prd = y_prd = z_prd = true;
+		}
         else if(se(argv[i],"-p")) x_prd=y_prd=z_prd=true;
         else if(se(argv[i],"-px")) x_prd=true;
         else if(se(argv[i],"-py")) y_prd=true;
@@ -392,32 +448,43 @@ int main(int argc,char **argv) {
         return VOROPP_CMD_LINE_ERROR;
     }
 
+
     // Read in the dimensions of the test box, and estimate the number of boxes
     // to divide the region up into
-    double ax=atof(argv[i]),bx=atof(argv[i+1]),
-           ay=atof(argv[i+2]),by=atof(argv[i+3]),
-           az=atof(argv[i+4]),bz=atof(argv[i+5]),
-           lx=bx-ax,ly=by-ay,lz=bz-az;
+    double ax = 0, bx = 0, ay = 0, by = 0, az = 0, bz = 0;
+    double lx, ly, lz, bxy, byz, bxz;
+    int tp;
+    if (non_orthogonal == true) {
+        bxy=atof(argv[i]);   lx=atof(argv[i+1]);
+        byz=atof(argv[i+2]); ly=atof(argv[i+3]);
+        bxz=atof(argv[i+4]); lz=atof(argv[i+5]);
+    } else {
+        ax=atof(argv[i]);   bx=atof(argv[i+1]);
+        ay=atof(argv[i+2]); by=atof(argv[i+3]);
+        az=atof(argv[i+4]); bz=atof(argv[i+5]);
+        lx=bx-ax; ly=by-ay; lz=bz-az;
+    }      
 
     // Check that for each coordinate, the minimum value is smaller than the
     // maximum value
-    if(bx<ax) {
-        fputs("voro++: Minimum x coordinate exceeds maximum x coordinate\n",stderr);
+    if(bx<ax || lx <= 0) {
+        fputs("voro++: Minimum x coordinate exceeds maximum x coordinate or lx is smaller than zero\n",stderr);
         wl.deallocate();
         return VOROPP_CMD_LINE_ERROR;
     }
-    if(by<ay) {
-        fputs("voro++: Minimum y coordinate exceeds maximum y coordinate\n",stderr);
+    if(by<ay || lx <= 0) {
+        fputs("voro++: Minimum y coordinate exceeds maximum y coordinate or ly is smaller than zero\n",stderr);
         wl.deallocate();
         return VOROPP_CMD_LINE_ERROR;
     }
-    if(bz<az) {
-        fputs("voro++: Minimum z coordinate exceeds maximum z coordinate\n",stderr);
+    if(bz<az || lx <= 0) {
+        fputs("voro++: Minimum z coordinate exceeds maximum z coordinate or lz is smaller than zero\n",stderr);
         wl.deallocate();
         return VOROPP_CMD_LINE_ERROR;
     }
 
     // Check that the output filename is a sensible length
+    // const char* input_filename = argv[i+6];
     int flen=strlen(argv[i+6]);
     if(flen>4096) {
         fputs("voro++: Input filename too long\n",stderr);
@@ -432,6 +499,14 @@ int main(int argc,char **argv) {
         in_file=stdin;
         base_fn=dflt_fname;
     } else {
+        if (non_orthogonal) {
+		    tp = count_lines(argv[i+6]);
+		    if (tp <= 0) {
+			    fprintf(stderr, "voro++: cannot open file %s\n", argv[i+6]);
+			    wl.deallocate();
+			    return VOROPP_CMD_LINE_ERROR;
+		    }
+        }
         in_file=safe_fopen(argv[i+6],"r");
         base_fn=argv[i+6];
     }
@@ -499,7 +574,7 @@ int main(int argc,char **argv) {
                 out_file=stdout;stdout_used=true;
             } else out_file=safe_fopen(argv[i+7],"w");
         } else {
-            sprintf(buffer,"%s.vor",base_fn);
+            sprintf(buffer,"%s.vol",base_fn);
             out_file=safe_fopen(buffer,"w");
         }
     }
@@ -516,73 +591,149 @@ int main(int argc,char **argv) {
 
     // Now switch depending on whether polydispersity was enabled, and whether
     // output ordering is requested
-    double vol=0;int tp=0,vcc=0;
-    if(polydisperse) {
-        container_poly_3d con(ax,bx,ay,by,az,bz,nx,ny,nz,x_prd,y_prd,z_prd,init_mem,num_thread);
-        con.add_wall(wl);
+    double vol=0;int vcc=0;
+    
+    if(non_orthogonal) {
+        if(polydisperse) {
+            container_triclinic_poly con(lx,bxy,ly,bxz,byz,lz,nx,ny,nz,init_mem,num_thread);
+            // con.add_wall(wl);
+            if(ordered) {
+                particle_order vo;
+                if(bm==none) {
+                    plist4->setup(vo,con);delete plist4;
+                } else {
+                    con.import(vo,in_file);
+                    if(in_file!=stdin) fclose(in_file);
+                }
+            
+                if(neigh) {
+                    voronoicell_neighbor_3d c(con);
+                    cmd_line_output_tri(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc);
+                } else {
+                    voronoicell_3d c(con);
+                    cmd_line_output_tri(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc);
+                }
+            } else {
+                if(bm==none) {
+                    plist4->setup(con);delete plist4;
+                } else {
+                    con.import(in_file);
+                    if(in_file!=stdin) fclose(in_file);
+                }
 
-        if(ordered) {
-            particle_order vo;
-            if(bm==none) {
-                plist4->setup(vo,con);delete plist4;
-            } else {
-                con.import(vo,in_file);
-                if(in_file!=stdin) fclose(in_file);
-            }
-            if(neigh) {
-                voronoicell_neighbor_3d c(con);
-                cmd_line_output(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
-            } else {
-                voronoicell_3d c(con);
-                cmd_line_output(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                if(neigh) {
+                    voronoicell_neighbor_3d c(con);
+                    cmd_line_output_tri(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc);
+                } else {
+                    voronoicell_3d c(con);
+                    cmd_line_output_tri(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc);
+                }
             }
         } else {
-            if(bm==none) {
-                plist4->setup(con);delete plist4;
+            printf("lx,bxy,ly,bxz,byz,lz: %.3f,%.3f,%.3f,%.3f,%.3f,%.3f", lx,bxy,ly,bxz,byz,lz);
+            container_triclinic con(lx,bxy,ly,bxz,byz,lz,nx,ny,nz,init_mem,num_thread);
+            // con.add_wall(wl);
+            if(ordered) {
+                particle_order vo;
+                if(bm==none) {
+                    plist3->setup(vo,con);delete plist3;
+                } else {
+                    con.import(vo,in_file);
+                    if(in_file!=stdin) fclose(in_file);
+                }
+
+                if(neigh) {
+                    voronoicell_neighbor_3d c(con);
+                    cmd_line_output_tri(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc);
+                } else {
+                    voronoicell_3d c(con);
+                    cmd_line_output_tri(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc);
+                }
             } else {
-                con.import(in_file);
-                if(in_file!=stdin) fclose(in_file);
-            }
-            if(neigh) {
-                voronoicell_neighbor_3d c(con);
-                cmd_line_output(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
-            } else {
-                voronoicell_3d c(con);
-                cmd_line_output(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                if(bm==none) {
+                    plist3->setup(con); delete plist3;
+                } else {
+                    con.import(in_file);
+                    if(in_file!=stdin) fclose(in_file);
+                }
+
+                if(neigh) {
+                    voronoicell_neighbor_3d c(con);
+                    cmd_line_output_tri(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc);
+                } else {
+                    voronoicell_3d c(con);
+                    cmd_line_output_tri(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc);
+                }
             }
         }
     } else {
-        container_3d con(ax,bx,ay,by,az,bz,nx,ny,nz,x_prd,y_prd,z_prd,init_mem,num_thread);
-        con.add_wall(wl);
+        if(polydisperse) {
+            container_poly_3d con(ax,bx,ay,by,az,bz,nx,ny,nz,x_prd,y_prd,z_prd,init_mem,num_thread);
+            con.add_wall(wl);
 
-        if(ordered) {
-            particle_order vo;
-            if(bm==none) {
-                plist3->setup(vo,con);delete plist3;
+            if(ordered) {
+                particle_order vo;
+                if(bm==none) {
+                    plist4->setup(vo,con);delete plist4;
+                } else {
+                    con.import(vo,in_file);
+                    if(in_file!=stdin) fclose(in_file);
+                }
+                if(neigh) {
+                    voronoicell_neighbor_3d c(con);
+                    cmd_line_output(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                } else {
+                    voronoicell_3d c(con);
+                    cmd_line_output(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                }
             } else {
-                con.import(vo,in_file);
-                if(in_file!=stdin) fclose(in_file);
-            }
-            if(neigh) {
-                voronoicell_neighbor_3d c(con);
-                cmd_line_output(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
-            } else {
-                voronoicell_3d c(con);
-                cmd_line_output(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                if(bm==none) {
+                    plist4->setup(con);delete plist4;
+                } else {
+                    con.import(in_file);
+                    if(in_file!=stdin) fclose(in_file);
+                }
+                if(neigh) {
+                    voronoicell_neighbor_3d c(con);
+                    cmd_line_output(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                } else {
+                    voronoicell_3d c(con);
+                    cmd_line_output(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                }
             }
         } else {
-            if(bm==none) {
-                plist3->setup(con);delete plist3;
+            container_3d con(ax,bx,ay,by,az,bz,nx,ny,nz,x_prd,y_prd,z_prd,init_mem,num_thread);
+            con.add_wall(wl);
+
+            if(ordered) {
+                particle_order vo;
+                if(bm==none) {
+                    plist3->setup(vo,con);delete plist3;
+                } else {
+                    con.import(vo,in_file);
+                    if(in_file!=stdin) fclose(in_file);
+                }
+                if(neigh) {
+                    voronoicell_neighbor_3d c(con);
+                    cmd_line_output(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                } else {
+                    voronoicell_3d c(con);
+                    cmd_line_output(vo,con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                }
             } else {
-                con.import(in_file);
-                if(in_file!=stdin) fclose(in_file);
-            }
-            if(neigh) {
-                voronoicell_neighbor_3d c(con);
-                cmd_line_output(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
-            } else {
-                voronoicell_3d c(con);
-                cmd_line_output(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                if(bm==none) {
+                    plist3->setup(con);delete plist3;
+                } else {
+                    con.import(in_file);
+                    if(in_file!=stdin) fclose(in_file);
+                }
+                if(neigh) {
+                    voronoicell_neighbor_3d c(con);
+                    cmd_line_output(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                } else {
+                    voronoicell_3d c(con);
+                    cmd_line_output(con,c,c_str,out_file,gnu_file,povp_file,povv_file,verbose,vol,vcc,tp);
+                }
             }
         }
     }
