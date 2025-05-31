@@ -221,7 +221,7 @@ void cmd_line_output(c_class &con,v_class &c,const char* format,FILE* out_file,F
 // Carries out the Voronoi computation and outputs the results to the requested
 // files, for the case when a particle order has been computed
 template<class c_class,class v_class>
-void cmd_line_output(particle_order vo,c_class &con,v_class &c,const char* format,FILE* out_file,FILE* gnu_file,FILE* povp_file,FILE* povv_file,bool verbose,double &vol,int &vcc,int &tp) {
+void cmd_line_output(particle_order &vo,c_class &con,v_class &c,const char* format,FILE* out_file,FILE* gnu_file,FILE* povp_file,FILE* povv_file,bool verbose,double &vol,int &vcc,int &tp) {
     container_base_3d::iterator_order cli;
     double **conp=con.p;int **conid=con.id;
     for(cli=con.begin(vo);cli<con.end(vo);cli++) if(con.compute_cell(c,cli)) {
@@ -235,10 +235,7 @@ template<class c_class,class v_class>
 void cmd_line_output_tri(c_class &con,v_class &c,const char* format,FILE* out_file,FILE* gnu_file,FILE* povp_file,FILE* povv_file,bool verbose,double &vol,int &vcc) {
     container_triclinic_base::iterator cli;
     double **conp=con.p;int **conid=con.id;
-    int i = 0;
-    printf("cmd_line_output_tri = %d\n", i);
     for(cli=con.begin();cli<con.end();cli++) {
-        printf("iout = %d\n", i); i++;
         if(con.compute_cell(c,cli)) {
             cell_output(c,cli,con.ps,conp,conid,format,out_file,gnu_file,povp_file,povv_file);
             if(verbose) {vol+=c.volume();vcc++;}
@@ -249,7 +246,7 @@ void cmd_line_output_tri(c_class &con,v_class &c,const char* format,FILE* out_fi
 // Carries out the Voronoi computation and outputs the results to the requested
 // files, for the case when a particle order has been computed
 template<class c_class,class v_class>
-void cmd_line_output_tri(particle_order vo,c_class &con,v_class &c,const char* format,FILE* out_file,FILE* gnu_file,FILE* povp_file,FILE* povv_file,bool verbose,double &vol,int &vcc) {
+void cmd_line_output_tri(particle_order &vo,c_class &con,v_class &c,const char* format,FILE* out_file,FILE* gnu_file,FILE* povp_file,FILE* povv_file,bool verbose,double &vol,int &vcc) {
     container_triclinic_base::iterator_order cli;
     double **conp=con.p;int **conid=con.id;
     for(cli=con.begin(vo);cli<con.end(vo);cli++) 
@@ -629,7 +626,6 @@ int main(int argc,char **argv) {
                 }
             }
         } else {
-            printf("lx,bxy,ly,bxz,byz,lz: %.3f,%.3f,%.3f,%.3f,%.3f,%.3f", lx,bxy,ly,bxz,byz,lz);
             container_triclinic con(lx,bxy,ly,bxz,byz,lz,nx,ny,nz,init_mem,num_thread);
             // con.add_wall(wl);
             if(ordered) {

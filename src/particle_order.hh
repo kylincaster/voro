@@ -41,6 +41,9 @@ class particle_order {
          * ordering information.
          * \param[in] init_size the initial amount of memory to
          *                      allocate. */
+        particle_order(const particle_order&) = delete;  
+        particle_order& operator=(const particle_order&) = delete;
+        
         particle_order(int init_size=init_ordering_size)
             : o(new int[init_size<<1]),op(o),size(init_size) {}
         /** The particle_order destructor frees the dynamically allocated
